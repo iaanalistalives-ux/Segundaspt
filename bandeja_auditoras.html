@@ -198,6 +198,9 @@ box-shadow:0 8px 24px rgba(0,0,0,.25);}
 .lote.mini .grp{font-size:15px;font-weight:700;color:var(--slate);margin-left:6px;}
 .lote.mini .col{display:block;font-size:12px;font-weight:400;color:var(--stone);margin-top:1px;}
 .lote.mini .der{text-align:right;flex:none;}
+.lote.mini .der{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;align-items:center;max-width:52%;}
+.finBtn{min-height:40px;color:var(--sage-dark);border-color:var(--sage);font-weight:800;}
+.barraCap .btn{padding:0 16px;}
 .lote.mini .flecha{color:var(--sage);font-size:22px;font-weight:700;}
 /* botones grandes del lote */
 .bigBtns{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
@@ -230,7 +233,7 @@ font-family:inherit;font-size:13px;font-weight:700;color:#1a1a1a;text-align:left
 font-weight:800;min-width:24px;height:24px;display:flex;align-items:center;justify-content:center;padding:0 6px;}
 .barraCap{position:sticky;bottom:0;margin:14px -14px -60px;padding:12px 14px calc(12px + env(safe-area-inset-bottom,0px));
 background:#fff;box-shadow:0 -4px 14px rgba(14,59,54,.12);display:flex;gap:12px;align-items:center;}
-.bcRes{flex:1;font-size:13px;color:var(--stone);line-height:1.3;}
+.bcRes{flex:0 0 auto;min-width:64px;font-size:12px;color:var(--stone);line-height:1.3;}
 .bcRes b{color:var(--rose);font-size:18px;}
 .barraCap .btn{min-height:52px;padding:0 26px;font-size:16px;}
 
@@ -316,6 +319,7 @@ body.capturando .banner,body.capturando .roles{display:none;}
       <div id="capDefectos"></div>
       <div class="barraCap">
         <div class="bcRes" id="bcRes"></div>
+        <button class="btn" id="btnGuardarFin">Guardar y terminar</button>
         <button class="btn primary" id="btnGuardarSeg">Guardar</button>
       </div>
     </div>
@@ -351,7 +355,7 @@ body.capturando .banner,body.capturando .roles{display:none;}
 <script>
 'use strict';
 /* =====================================================================================
-   Segundas · Bandeja de auditoras — v2 · 2026-10-05 · PRUEBA PILOTO · sin barra de título (va dentro del portal nuevo de Sistemas) (acceso abierto por link)
+   Segundas · Bandeja de auditoras — v3 · 2026-10-05 · PRUEBA PILOTO · sin barra de título (va dentro del portal nuevo de Sistemas) (acceso abierto por link)
    Backend: Supabase, función segp_api (tablas segp_*).
    Lo que la auditora va contando queda guardado en el celular hasta que pulsa Guardar:
    si se cierra la pantalla o se va la señal, no se pierde.
@@ -446,16 +450,21 @@ function pintarBandeja(){
     : ls.map(l => {
       const d = dias(l.entregado_en), otros = (l.revisando || []).filter(u => u !== yo), loc = pendLocal(l.id);
       const der = l.estado === 'EN_REVISION'
-        ? '<span class="pill ' + (d >= 3 ? 'rojo' : d >= 1 ? 'ambar' : '') + '">' + antig(l.entregado_en) + '</span>'
+        ? '<span class="pill ' + (d >= 3 ? 'rojo' : d >= 1 ? 'ambar' : '') + '">' + antig(l.entregado_en) + '</span>' +
+          (l.segundas ? '<span class="pill rojo">' + nf(l.segundas) + ' seg.</span>' : '') +
+          '<button class="btn chico finBtn" data-fin="' + l.id + '">Terminé ✓</button>'
         : '<span class="pill rojo">' + nf(l.segundas) + ' seg.</span>';
-      return '<button class="lote mini" data-id="' + l.id + '"><div class="izq"><span class="op">OP ' + esc(l.op) +
+      return '<div class="lote mini" data-id="' + l.id + '"><div class="izq"><span class="op">OP ' + esc(l.op) +
         '</span><span class="grp">' + esc(l.grupo) + '</span><span class="col">' + esc(etiqueta(l)) + ' · ' + nf(l.cantidad) + ' prendas</span>' +
         (otros.length ? '<span class="quien">👤 ' + esc(otros.join(', ')) + ' revisando ahora</span>' : '') +
         (loc ? '<span class="quien" style="color:var(--taupe)">✎ Tienes ' + loc + ' segundas sin guardar aquí</span>' : '') + '</div>' +
-        '<div class="der">' + der + '</div><span class="flecha">›</span></button>';
+        '<div class="der">' + der + '</div><span class="flecha">›</span></div>';
     }).join('');
 }
-$('audLista').addEventListener('click', e => { const b = e.target.closest('[data-id]'); if (b) abrirLote(+b.dataset.id); });
+$('audLista').addEventListener('click', e => {
+  const f = e.target.closest('[data-fin]'); if (f){ e.stopPropagation(); terminarLote(+f.dataset.fin, false).then(ok => { if (ok) cargarBandeja(); }); return; }
+  const b = e.target.closest('[data-id]'); if (b) abrirLote(+b.dataset.id);
+});
 $('tRev').onclick = () => { tab = 'rev'; pintarBandeja(); };
 $('tOk').onclick = () => { tab = 'ok'; pintarBandeja(); };
 $('fBuscar').addEventListener('input', pintarBandeja);
@@ -538,17 +547,23 @@ $('lHist').addEventListener('click', async e => {
   if (!r.ok){ toast(limpiaErr(r.error), true); return; }
   toast('Registro anulado'); cargarLote();
 });
-async function terminarRev(){
-  await cargarLote();                                   // datos frescos antes de decidir
-  const l = det.lote, ot = (l.revisando || []).filter(u => u !== yo);
-  if (ot.length && !confirm('⚠ ' + ot.join(', ') + ' está revisando este lote ahora mismo.\n\nSi lo terminas, tendrá que reabrirlo para guardar. ¿Ya terminaron todas?')) return;
-  if (pendLocal(l.id) && !confirm('Tienes ' + pendLocal(l.id) + ' segundas contadas sin guardar en este celular.\n¿Terminar igual? (quedarán sin guardar)')) return;
-  if (!confirm('¿Terminaron de revisar las ' + nf(l.cantidad) + ' prendas?\n\nSegundas: ' + nf(l.segundas) + '\nVuelven a primera: ' + nf(l.cantidad - l.segundas) +
-    '\n\nSi luego aparece algo más, se puede reabrir.')) return;
+/* Terminar revisión: desde la bandeja, desde el lote o al guardar. Siempre con datos frescos. */
+async function terminarLote(id, recienGuardado){
+  const rl = await api('lote', { lote_id: id });
+  if (!rl.ok){ toast(rl.error, true); return false; }
+  const l = rl.lote, ot = (l.revisando || []).filter(u => u !== yo);
+  if (l.estado !== 'EN_REVISION'){ toast('Este lote ya estaba revisado.', true); cargarBandeja(true); return false; }
+  if (ot.length && !confirm('⚠ ' + ot.join(', ') + ' está revisando este lote ahora mismo.\n\nSi lo terminas, tendrá que reabrirlo para guardar. ¿Ya terminaron todas?')) return false;
+  if (!recienGuardado && pendLocal(l.id) && !confirm('Tienes ' + pendLocal(l.id) + ' segundas contadas sin guardar en este celular.\n¿Terminar igual? (quedarán sin guardar)')) return false;
+  if (!confirm('OP ' + l.op + ' · ' + etiqueta(l) + '\n¿Terminaron de revisar las ' + nf(l.cantidad) + ' prendas?\n\n' +
+    (l.segundas ? 'Segundas: ' + nf(l.segundas) : 'No hay segundas registradas') + '\nVuelven a primera: ' + nf(l.cantidad - l.segundas) +
+    '\n\nSi luego aparece algo más, se puede reabrir.')) return false;
   const r = await api('terminar', { usuario: yo, lote_id: l.id });
-  if (!r.ok){ toast(limpiaErr(r.error), true); return; }
-  toast('Lote revisado: ' + nf(r.lote.recuperadas) + ' prendas vuelven a primera'); irBandeja(true);
+  if (!r.ok){ toast(limpiaErr(r.error), true); return false; }
+  toast('OP ' + l.op + ' revisada: ' + nf(r.lote.recuperadas) + ' prendas vuelven a primera');
+  return true;
 }
+async function terminarRev(){ if (await terminarLote(abierto, false)) irBandeja(true); }
 async function reabrirRev(){
   if (!confirm('¿Reabrir la revisión de OP ' + det.lote.op + '?\nVuelve a "En revisión" y queda anotado en el historial.')) return;
   const r = await api('reabrir', { usuario: yo, lote_id: abierto });
@@ -627,8 +642,9 @@ function pintarCaptura(){
     $('aCant').value = cap.cuenta[activo] || 0; $('btnMas').disabled = libre() <= 0;
   } else { $('capActivo').classList.add('oculto'); $('capVacio').classList.remove('oculto'); }
   const p = pend(), nd = Object.keys(cap.cuenta).length;
-  $('bcRes').innerHTML = p ? '<b>' + nf(p) + '</b> segunda' + (p > 1 ? 's' : '') + ' por guardar<br>' + nd + ' defecto' + (nd > 1 ? 's' : '') : 'Nada por guardar todavía';
+  $('bcRes').innerHTML = p ? '<b>' + nf(p) + '</b><br>por guardar' : 'Nada por guardar';
   $('btnGuardarSeg').disabled = !p; $('btnGuardarSeg').textContent = p ? 'Guardar ' + nf(p) : 'Guardar';
+  $('btnGuardarFin').textContent = p ? 'Guardar y terminar' : 'Terminar revisión';
   pintarDefectos();
 }
 function sinTilde(s){ return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase(); }
@@ -656,9 +672,14 @@ function pintarDefectos(){
   $('capDefectos').innerHTML = html;
 }
 $('capDefectos').addEventListener('click', e => { const b = e.target.closest('[data-m]'); if (b) tocar(b.dataset.m); });
-$('btnGuardarSeg').onclick = guardarSeg;
-async function guardarSeg(){
-  const p = pend(); if (!p) return;
+$('btnGuardarSeg').onclick = () => guardarSeg(false);
+$('btnGuardarFin').onclick = () => guardarSeg(true);
+async function guardarSeg(fin){
+  const p = pend();
+  if (!p){
+    if (fin && await terminarLote(abierto, true)){ api('salir', { usuario: yo, lote_id: abierto }); irBandeja(true); }
+    return;
+  }
   const b = $('btnGuardarSeg'); b.disabled = true; b.textContent = 'Guardando…';
   const items = Object.keys(cap.cuenta).map(id => ({ motivo_id: +id, cantidad: cap.cuenta[id], token: cap.tokens[id] }));
   let r = await api('guardar_segundas', { usuario: yo, lote_id: abierto, items });
@@ -675,10 +696,11 @@ async function guardarSeg(){
     if (/^TOPE\|/.test(r.error || '')) await ping();
     pintarCaptura(); return;
   }
-  const op = det.lote.op;
+  const op = det.lote.op, id = abierto;
   try{ localStorage.removeItem(kCap(abierto)); }catch(e){}
   cap = { cuenta: {}, tokens: {} }; activo = null;
   toast('Guardadas ' + nf(p) + ' segundas en OP ' + op + '. Busca la siguiente OP.');
+  if (fin) await terminarLote(id, true);
   irBandeja(true);
 }
 
